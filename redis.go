@@ -33,6 +33,8 @@ type RedisAdapter struct {
 	docker_host   string
 	use_v0        bool
 	logstash_type string
+	stack         string
+	instance_id   string
 }
 
 type DockerFields struct {
@@ -54,6 +56,8 @@ type LogstashMessageV0 struct {
 	Sourcehost string         `json:"@source_host"`
 	Message    string         `json:"@message"`
 	Fields     LogstashFields `json:"@fields"`
+	Stack      string         `json:"stack"`
+	InstanceId string         `json:"instance-id"`
 }
 
 type LogstashMessageV1 struct {
@@ -62,6 +66,8 @@ type LogstashMessageV1 struct {
 	Sourcehost string       `json:"host"`
 	Message    string       `json:"message"`
 	Fields     DockerFields `json:"docker"`
+	Stack      string       `json:"stack"`
+	InstanceId string       `json:"instance-id"`
 	Logtype    string       `json:"logtype,omitempty"`
 	// Only one of the following 3 is initialized and used, depending on the incoming json:logtype
 	LogtypeAccessfields map[string]interface{} `json:"accesslog,omitempty"`
@@ -120,6 +126,8 @@ func NewRedisAdapter(route *router.Route) (router.LogAdapter, error) {
 		docker_host:   docker_host,
 		use_v0:        use_v0,
 		logstash_type: logstash_type,
+		stack:         os.Getenv("AWS_STACK"),
+		instance_id:   os.Getenv("AWS_INSTANCE_ID"),
 	}, nil
 }
 
@@ -130,7 +138,7 @@ func (a *RedisAdapter) Stream(logstream chan *router.Message) {
 	mute := false
 
 	for m := range logstream {
-		js, err := createLogstashMessage(m, a.docker_host, a.use_v0, a.logstash_type)
+		js, err := createLogstashMessage(m, a.docker_host, a.use_v0, a.logstash_type, a.stack, a.instance_id)
 		if err != nil {
 			if !mute {
 				log.Println("redis: error on json.Marshal (muting until recovered): ", err)
@@ -221,7 +229,7 @@ func splitImage(image_tag string) (image string, tag string) {
 	return
 }
 
-func createLogstashMessage(m *router.Message, docker_host string, use_v0 bool, logstash_type string) ([]byte, error) {
+func createLogstashMessage(m *router.Message, docker_host string, use_v0 bool, logstash_type, stack, instance_id string) ([]byte, error) {
 	image, image_tag := splitImage(m.Container.Config.Image)
 	cid := m.Container.ID[0:12]
 	name := m.Container.Name[1:]
@@ -240,6 +248,8 @@ func createLogstashMessage(m *router.Message, docker_host string, use_v0 bool, l
 		msg.Fields.Docker.ImageTag = image_tag
 		msg.Fields.Docker.Source = m.Source
 		msg.Fields.Docker.DockerHost = docker_host
+		msg.Stack = stack
+		msg.InstanceId = instance_id
 
 		return json.Marshal(msg)
 	} else {
@@ -254,6 +264,8 @@ func createLogstashMessage(m *router.Message, docker_host string, use_v0 bool, l
 		msg.Fields.ImageTag = image_tag
 		msg.Fields.Source = m.Source
 		msg.Fields.DockerHost = docker_host
+		msg.Stack = stack
+		msg.InstanceId = instance_id
 
 		// Check if the message to log itself is json
 		if validJsonMessage(strings.TrimSpace(m.Data)) {
